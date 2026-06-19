@@ -219,16 +219,36 @@ def call_ollama(prompt: str, model: str, url: str) -> str:
 
 
 # ---- Output helpers ---------------------------------------------------------
-def copy_to_clipboard(text: str) -> bool:
-    for tool, args in (("wl-copy", ["wl-copy"]),
-                       ("xclip", ["xclip", "-selection", "clipboard"])):
-        if shutil.which(tool):
-            try:
-                subprocess.run(args, input=text.encode(), check=True)
-                return True
-            except Exception:
-                continue
-    return False
+def copy_to_clipboard(text: str) -> "str | None":
+    """Copy text to the system clipboard. Returns the tool used, or None.
+
+    The clipboard helper (xclip on X11, wl-copy on Wayland) must keep running
+    in the background to *own* the selection. We detach it into its own session
+    with stdout/stderr to /dev/null so it survives after this script — and any
+    surrounding shell pipeline — exits; otherwise the clipboard reverts."""
+    # Prefer the tool matching the session; fall back to whatever's installed.
+    on_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    candidates = [("wl-copy", ["wl-copy"]),
+                  ("xclip", ["xclip", "-selection", "clipboard"])]
+    if not on_wayland:
+        candidates.reverse()  # try xclip first on X11
+
+    data = text.encode()
+    for tool, argv in candidates:
+        if not shutil.which(tool):
+            continue
+        try:
+            p = subprocess.Popen(
+                argv, stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            p.communicate(data)  # writes input, closes stdin, waits for fork
+            if p.returncode == 0:
+                return tool
+        except Exception:
+            continue
+    return None
 
 
 def save_output(raw: str, formatted: str) -> Path:
@@ -283,8 +303,9 @@ def main() -> None:
     path = save_output(transcript, formatted)
     print(f"\n💾 Saved to {path}")
     if not args.no_clip:
-        if copy_to_clipboard(formatted):
-            print("📋 Copied to clipboard.")
+        tool = copy_to_clipboard(formatted)
+        if tool:
+            print(f"📋 Copied to clipboard (via {tool}) — paste it straight in.")
         else:
             print("(No clipboard tool found — install xclip or wl-clipboard.)")
 
