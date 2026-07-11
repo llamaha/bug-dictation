@@ -9,5 +9,8 @@ openai-whisper
 # Talking to ollama
 requests
 
+# Live mic-level overlay shown while recording (dictate_meter.py)
+PyQt5
+
 # torch is installed separately from the CUDA 12.8 index (Blackwell / RTX 5090):
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128

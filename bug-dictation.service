@@ -1,0 +1,21 @@
+[Unit]
+Description=bug-dictation warm daemon (Whisper + hotkey toggle)
+# Only run inside a graphical login (needs audio, notifications, GPU).
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/adam/repos/bug-dictation
+ExecStart=/home/adam/repos/bug-dictation/venv/bin/python /home/adam/repos/bug-dictation/dictate_daemon.py
+Restart=on-failure
+RestartSec=3
+# Keep the GPU model load from being killed for slow start.
+TimeoutStartSec=120
+# VRAM tuning (uncomment/adjust as desired):
+# Environment=DICTATE_IDLE_TIMEOUT=600   # exit + free VRAM after N idle seconds (0 = never)
+# Environment=OLLAMA_KEEP_ALIVE=0        # unload gemma from VRAM right after formatting
+# Environment=DICTATE_METER=0            # disable the live mic-level overlay
+
+[Install]
+WantedBy=graphical-session.target

@@ -98,25 +98,42 @@ def record_until_enter() -> "object":
 
 
 # ---- 2. Transcription -------------------------------------------------------
-def transcribe(audio_or_path, model_name: str) -> str:
-    """Transcribe a numpy array or an audio file path with Whisper."""
-    import whisper
-
+def whisper_device() -> str:
+    """Return 'cuda' if a GPU is usable, else 'cpu'."""
     try:
         import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        return "cuda" if torch.cuda.is_available() else "cpu"
     except Exception:
-        device = "cpu"
+        return "cpu"
 
+
+def load_whisper_model(model_name: str, device: "str | None" = None):
+    """Load a Whisper model once. Reuse the returned object for many
+    transcriptions (the daemon keeps it warm in VRAM)."""
+    import whisper
+
+    if device is None:
+        device = whisper_device()
     if device == "cpu":
         print("⚠️  CUDA not available — falling back to CPU (slow).", file=sys.stderr)
     print(f"🧠 Loading Whisper '{model_name}' on {device} …")
-    model = whisper.load_model(model_name, device=device)
+    return whisper.load_model(model_name, device=device)
 
-    print("✍️  Transcribing (text appears below as it's decoded) …\n")
+
+def transcribe_audio(model, audio_or_path, verbose: bool = True) -> str:
+    """Transcribe with an already-loaded Whisper model. Returns stripped text
+    (empty string if nothing was recognised — caller decides how to handle)."""
+    fp16 = next(model.parameters()).is_cuda
     # verbose=True streams each segment to the terminal as it's recognised.
-    result = model.transcribe(audio_or_path, fp16=(device == "cuda"), verbose=True)
-    text = (result.get("text") or "").strip()
+    result = model.transcribe(audio_or_path, fp16=fp16, verbose=verbose)
+    return (result.get("text") or "").strip()
+
+
+def transcribe(audio_or_path, model_name: str) -> str:
+    """One-shot: load a model and transcribe (used by the CLI)."""
+    model = load_whisper_model(model_name)
+    print("✍️  Transcribing (text appears below as it's decoded) …\n")
+    text = transcribe_audio(model, audio_or_path)
     if not text:
         print("Whisper returned no text.", file=sys.stderr)
         sys.exit(1)
@@ -186,7 +203,8 @@ tasks that could be handed directly to a coding agent. Rules:
 """
 
 
-def call_ollama(prompt: str, model: str, url: str) -> str:
+def call_ollama(prompt: str, model: str, url: str,
+                keep_alive: "str | None" = None) -> str:
     endpoint = url.rstrip("/") + "/api/generate"
     payload = {
         "model": model,
@@ -194,6 +212,11 @@ def call_ollama(prompt: str, model: str, url: str) -> str:
         "stream": True,
         "options": {"temperature": 0.2},
     }
+    # keep_alive controls how long ollama keeps the model in VRAM after this
+    # request. "0" unloads it immediately (frees VRAM at the cost of a reload
+    # next time); e.g. "5m" keeps it warm for five minutes.
+    if keep_alive is not None:
+        payload["keep_alive"] = keep_alive
     print(f"🤖 Formatting with ollama '{model}' …\n")
     try:
         resp = requests.post(endpoint, json=payload, stream=True, timeout=600)
